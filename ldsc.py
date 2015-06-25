@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 (c) 2014 Brendan Bulik-Sullivan and Hilary Finucane
 
@@ -17,6 +18,12 @@ import pandas as pd
 from subprocess import call
 from itertools import product
 import time, sys, traceback, argparse
+
+try:
+    x = pd.DataFrame({'A': [1, 2, 3]})
+    x.drop_duplicates(subset='A')
+except TypeError:
+    raise ImportError('LDSC requires pandas version > 0.15.2')
 
 __version__ = '1.0.0'
 MASTHEAD = "*********************************************************************\n"
@@ -99,7 +106,7 @@ def annot_sort_key(s):
     if type(s) == tuple:
         s = [x.split('_')[0] for x in s]
         s = map(lambda x: float(x) if x != 'min' else -float('inf'), s)
-    else: #type(s) = str:
+    else:  # type(s) = str:
         s = s.split('_')[0]
         if s == 'min':
             s = float('-inf')
@@ -149,7 +156,7 @@ def ldscore(args, log):
 
 
     elif args.cts_bin is not None and args.cts_breaks is not None:  # --cts-bin
-        cts_fnames = args.cts_bin.split(',')  # read filenames
+        cts_fnames = sumstats._splitp(args.cts_bin)  # read filenames
         args.cts_breaks = args.cts_breaks.replace('N','-')  # replace N with negative sign
         try:  # split on x
             breaks = [[float(x) for x in y.split(',')] for y in args.cts_breaks.split('x')]
@@ -369,6 +376,7 @@ def ldscore(args, log):
     t = df.ix[:,4:].describe()
     log.log( t.ix[1:,:] )
 
+    np.seterr(divide='ignore', invalid='ignore')  # print NaN instead of weird errors
     # print correlation matrix including all LD Scores and sample MAF
     log.log('')
     log.log('MAF/LD Score Correlation Matrix')
@@ -397,6 +405,8 @@ def ldscore(args, log):
         log.log('\nSummary of Annotation Matrix Row Sums')
         row_sums = x.sum(axis=1).describe()
         log.log(_remove_dtype(row_sums))
+
+    np.seterr(divide='raise', invalid='raise')
 
 
 parser = argparse.ArgumentParser()
@@ -509,6 +519,9 @@ parser.add_argument('--two-step', default=None, type=float,
     help='Test statistic bound for use with the two-step estimator. Not compatible with --no-intercept and --constrain-intercept.')
 parser.add_argument('--chisq-max', default=None, type=float,
     help='Max chi^2.')
+parser.add_argument('--all', default=False, action='store_true',
+    help='Estimate all pairwise genetic correlation.')
+
 # Flags for both LD Score estimation and h2/gencor estimation
 parser.add_argument('--print-cov', default=False, action='store_true',
     help='For use with --h2/--rg. This flag tells LDSC to print the '
@@ -563,9 +576,11 @@ if __name__ == '__main__':
         opts = vars(args)
         non_defaults = [x for x in opts.keys() if opts[x] != defaults[x]]
         header = MASTHEAD
-        header += "\nOptions: \n"
-        options = ['--'+x.replace('_','-')+' '+str(opts[x]) for x in non_defaults]
-        header += '\n'.join(options).replace('True','').replace('False','')+'\n'
+        header += "Call: \n"
+        header += './ldsc.py \\\n'
+        options = ['--'+x.replace('_','-')+' '+str(opts[x])+' \\' for x in non_defaults]
+        header += '\n'.join(options).replace('True','').replace('False','')
+        header = header[0:-1]+'\n'
         log.log(header)
         log.log('Beginning analysis at {T}'.format(T=time.ctime()))
         start_time = time.time()
@@ -586,14 +601,6 @@ if __name__ == '__main__':
                 raise ValueError('Cannot set both --per-allele and --pq-exp (--per-allele is equivalent to --pq-exp 1).')
             if args.per_allele:
                 args.pq_exp = 1
-            if not args.overlap_annot or args.not_M_5_50:
-                if args.frqfile is not None or args.frqfile_chr is not None:
-                    log.log('The frequency file is unnecessary and is being ignored.')
-                    args.frqfile = None
-                    args.frqfile_chr = None
-            if args.overlap_annot and not args.not_M_5_50:
-                if not (args.frqfile and args.ref_ld) or (args.frqfile_chr and args.ref_ld_chr):
-                    raise ValueError ('Must set either --frqfile and --ref-ld or --frqfile-chr and --ref-ld-chr')
 
 
             ldscore(args, log)
@@ -607,6 +614,15 @@ if __name__ == '__main__':
                 raise ValueError('Cannot set both --w-ld and --w-ld-chr.')
             if (args.samp_prev is not None) != (args.pop_prev is not None):
                 raise ValueError('Must set both or neither of --samp-prev and --pop-prev.')
+
+            if not args.overlap_annot or args.not_M_5_50:
+                if args.frqfile is not None or args.frqfile_chr is not None:
+                    log.log('The frequency file is unnecessary and is being ignored.')
+                    args.frqfile = None
+                    args.frqfile_chr = None
+            if args.overlap_annot and not args.not_M_5_50:
+                if not ((args.frqfile and args.ref_ld) or (args.frqfile_chr and args.ref_ld_chr)):
+                    raise ValueError ('Must set either --frqfile and --ref-ld or --frqfile-chr and --ref-ld-chr')
 
             if args.rg:
                 sumstats.estimate_rg(args, log)
